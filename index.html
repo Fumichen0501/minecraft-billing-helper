@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minecraft 伺服器費用分攤小幫手</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- Chosen Palette: Slate and Stone -->
+    <!-- Application Structure Plan: A dashboard-style SPA. It features a top summary section for key metrics (total cost, per-person cost, total owed), a central donut chart visualizing the payment status, and a main content area with interactive cards for each member. This card-based design was chosen over a simple table because it's more modular, mobile-friendly, and allows for more direct interaction (clicking to toggle payment status). The user flow is simple: view status, click to update, and see all related numbers and the chart update instantly. This provides a clear, task-oriented experience for managing the group's finances. -->
+    <!-- Visualization & Content Choices:
+    - Report Info: Overall payment status (money collected vs. outstanding). Goal: Inform/Compare. Viz/Presentation: Donut Chart. Interaction: The chart is dynamically updated when a payment is marked as complete. Justification: Provides a quick, high-level visual summary of the group's financial state. Library: Chart.js (Canvas).
+    - Report Info: Individual member payment status per month. Goal: Organize/Inform. Viz/Presentation: Interactive Member Cards. Interaction: Each month is a toggle button within the card. Clicking it changes the status from 'Unpaid' to 'Paid' and updates all relevant calculations on the page. Justification: This is more interactive and intuitive than a static table, turning the tracking process into a simple point-and-click task. Library/Method: HTML/CSS/Tailwind for structure, Vanilla JS for logic. -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 320px;
+            margin-left: auto;
+            margin-right: auto;
+            height: 320px;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+
+    <div class="container mx-auto p-4 md:p-8 max-w-5xl">
+
+        <header class="text-center mb-8">
+            <h1 class="text-3xl md:text-4xl font-bold text-slate-900">Minecraft 伺服器費用分攤</h1>
+            <p class="text-slate-500 mt-2">一個簡單的工具，用來追蹤誰已經繳交每月的伺服器費用。</p>
+        </header>
+
+        <section id="summary" class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+            <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 text-center">
+                <h3 class="font-bold text-slate-500 text-sm">每月總費用</h3>
+                <p class="text-3xl font-bold text-cyan-600">NT$ 230</p>
+            </div>
+            <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 text-center">
+                <h3 class="font-bold text-slate-500 text-sm">每人每月費用</h3>
+                <p id="per-person-monthly-fee" class="text-3xl font-bold text-cyan-600">NT$ 38</p>
+                <p class="text-xs text-slate-400 mt-1">（每月總成本 $233 (含 $3 手續費)，每人收取 $38，每月差額 $5 由 fumi 補足）</p>
+            </div>
+            <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 text-center">
+                <h3 class="font-bold text-slate-500 text-sm">總待收金額 (截至年底)</h3>
+                <p id="total-owed-overall" class="text-3xl font-bold text-amber-600">NT$ 0</p>
+            </div>
+            <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 text-center">
+                <h3 class="font-bold text-slate-500 text-sm">已墊付月份待收金額</h3>
+                <p id="total-owed-fumi-paid-months" class="text-3xl font-bold text-amber-600">NT$ 0</p>
+            </div>
+        </section>
+
+        <section class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-8">
+            <h2 class="text-xl font-bold text-center mb-4 text-slate-700">款項狀態總覽</h2>
+            <div class="chart-container">
+                <canvas id="payment-chart"></canvas>
+            </div>
+             <p class="text-center text-slate-500 text-sm mt-4">此圖表顯示所有已付月份的款項中，已收取與待收取的比例。</p>
+        </section>
+
+        <section>
+            <h2 class="text-xl font-bold text-center mb-6 text-slate-700">成員繳費狀態</h2>
+            <div id="members-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
+            </div>
+        </section>
+
+        <footer class="text-center mt-12 text-slate-400 text-sm">
+            <p>由 fumi 管理與維護 ✨</p>
+        </footer>
+
+    </div>
+
+    <template id="member-card-template">
+        <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col" data-member-id="">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="card-name text-2xl font-bold text-slate-800"></h3>
+                <div class="text-right">
+                    <span class="block text-xs text-slate-500">待繳金額</span>
+                    <span class="card-owed font-bold text-xl text-amber-600"></span>
+                </div>
+            </div>
+            <div class="flex-grow">
+                <p class="text-sm text-slate-600 mb-2">繳費方式: <span class="card-frequency font-medium text-slate-700"></span></p>
+                <!-- 年繳按鈕將透過 JavaScript 動態插入，且只會出現在非主要繳費者的卡片上 -->
+                <p class="text-sm text-slate-600 mb-4">點擊月份按鈕來切換繳費狀態。</p>
+                <div class="card-months grid grid-cols-3 sm:grid-cols-4 gap-2"></div>
+            </div>
+        </div>
+    </template>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const totalMonthlyCost = 230; // 每月總費用
+            const internationalFee = 3; // 跨國手續費
+            const totalActualMonthlyCost = totalMonthlyCost + internationalFee; // 實際每月總成本
+            const numberOfMembers = 6; // 總成員數 (fumi + 5位朋友)
+            const monthlyFeePerPerson = 38; // 每人每月費用，固定為整數
+
+            // 定義成員資料，目前只包含到 2025 年 12 月的繳費狀態和繳費方式
+            const membersData = [
+                { id: 'fumi', name: 'fumi (我)', isPayer: true, paymentFrequency: 'monthly', payments: {
+                    '6': 'paid', '7': 'paid', '8': 'unpaid', '9': 'unpaid', '10': 'unpaid', '11': 'unpaid', '12': 'unpaid'
+                } },
+                { id: 'pearl', name: '珍珠', isPayer: false, paymentFrequency: 'monthly', payments: {
+                    '6': 'unpaid', '7': 'unpaid', '8': 'unpaid', '9': 'unpaid', '10': 'unpaid', '11': 'unpaid', '12': 'unpaid'
+                } },
+                { id: 'ting', name: '廷家', isPayer: false, paymentFrequency: 'monthly', payments: {
+                    '6': 'unpaid', '7': 'unpaid', '8': 'unpaid', '9': 'unpaid', '10': 'unpaid', '11': 'unpaid', '12': 'unpaid'
+                } },
+                { id: 'tseng', name: '曾馨', isPayer: false, paymentFrequency: 'monthly', payments: {
+                    '6': 'unpaid', '7': 'unpaid', '8': 'unpaid', '9': 'unpaid', '10': 'unpaid', '11': 'unpaid', '12': 'unpaid'
+                } },
+                { id: 'chien', name: '阿謙', isPayer: false, paymentFrequency: 'monthly', payments: {
+                    '6': 'unpaid', '7': 'unpaid', '8': 'unpaid', '9': 'unpaid', '10': 'unpaid', '11': 'unpaid', '12': 'unpaid'
+                } },
+                { id: 'yiqian', name: '亦謙', isPayer: false, paymentFrequency: 'monthly', payments: {
+                    '6': 'unpaid', '7': 'unpaid', '8': 'unpaid', '9': 'unpaid', '10': 'unpaid', '11': 'unpaid', '12': 'unpaid'
+                } }
+            ];
+
+            const membersGrid = document.getElementById('members-grid');
+            const cardTemplate = document.getElementById('member-card-template');
+            const perPersonMonthlyFeeElement = document.getElementById('per-person-monthly-fee');
+            
+            let paymentChart;
+
+            // 渲染成員卡片
+            function renderCards() {
+                membersGrid.innerHTML = ''; // 清空現有卡片
+                membersData.forEach(member => {
+                    const card = cardTemplate.content.cloneNode(true);
+                    const cardDiv = card.querySelector('.bg-white'); // 取得主卡片 div
+                    cardDiv.dataset.memberId = member.id; // 設定 data-member-id
+
+                    card.querySelector('.card-name').textContent = member.name;
+                    card.querySelector('.card-frequency').textContent = member.paymentFrequency === 'monthly' ? '月繳' : '年繳';
+                    
+                    // 如果不是主要繳費者，則顯示年繳按鈕
+                    if (!member.isPayer) {
+                        const yearlyButton = document.createElement('button');
+                        yearlyButton.className = 'toggle-yearly-payment bg-blue-100 text-blue-800 px-3 py-1 rounded-lg text-xs font-semibold mb-4 hover:bg-blue-200 transition-colors duration-200';
+                        yearlyButton.textContent = '標記為本年度年繳'; // 按鈕文字調整為「本年度」
+                        // 將年繳按鈕插入到「繳費方式」段落之後
+                        const frequencyParagraph = cardDiv.querySelector('.card-frequency').closest('p');
+                        if (frequencyParagraph) {
+                            frequencyParagraph.after(yearlyButton);
+                        } else {
+                            cardDiv.querySelector('.flex-grow').prepend(yearlyButton); // 備用方案
+                        }
+                    }
+
+                    const monthsContainer = card.querySelector('.card-months');
+                    monthsContainer.innerHTML = ''; // 清空月份按鈕
+
+                    // 為每個月份建立按鈕
+                    Object.keys(member.payments).sort((a, b) => { // 確保月份按鈕順序正確 (例如 6, 7, ..., 12)
+                        const monthA = a.includes('-') ? parseFloat(a.split('-')[1]) + (parseFloat(a.split('-')[0]) * 100) : parseFloat(a);
+                        const monthB = b.includes('-') ? parseFloat(b.split('-')[1]) + (parseFloat(b.split('-')[0]) * 100) : parseFloat(b);
+                        return monthA - monthB;
+                    }).forEach(month => {
+                        const monthButton = document.createElement('button');
+                        monthButton.dataset.memberId = member.id;
+                        monthButton.dataset.month = month;
+                        monthButton.textContent = `${month.includes('-') ? month.split('-')[0] + '年' + month.split('-')[1] : month}月`; // 顯示 '6月'
+                        monthButton.className = 'month-toggle p-2 rounded-lg text-sm font-semibold transition-colors duration-200';
+                        monthsContainer.appendChild(monthButton);
+                    });
+                    
+                    membersGrid.appendChild(card);
+                });
+            }
+
+            // 更新所有數據和圖表
+            function updateAll() {
+                let totalOwedOverall = 0; // 總待收金額 (來自所有非主要繳費者，計算所有已定義的月份)
+                let totalOwedForFumiPaidMonths = 0; // 僅計算 fumi 已繳費月份的待收金額
+
+                // 更新「每人每月費用」顯示 (固定為 38)
+                perPersonMonthlyFeeElement.textContent = `NT$ ${monthlyFeePerPerson}`;
+
+                // 首先，更新個別成員卡片並計算總待收金額 (totalOwedOverall)
+                membersData.forEach(member => {
+                    const cardElement = document.querySelector(`[data-member-id="${member.id}"]`)?.closest('.bg-white');
+                    if (!cardElement) return; // 如果卡片不存在則跳過
+
+                    cardElement.querySelector('.card-name').textContent = member.name; // 確保名稱已更新
+                    cardElement.querySelector('.card-frequency').textContent = member.paymentFrequency === 'monthly' ? '月繳' : '年繳';
+
+                    if (member.isPayer) {
+                        cardElement.querySelector('.card-owed').textContent = `NT$ 0`; // 主要繳費者對自己沒有待繳金額
+                        // 主要繳費者的月份按鈕也應反映其繳費狀態
+                        Object.entries(member.payments).forEach(([month, status]) => {
+                            const monthButton = cardElement.querySelector(`[data-member-id="${member.id}"][data-month="${month}"]`);
+                            if(monthButton) {
+                                if(status === 'unpaid') {
+                                    monthButton.classList.remove('bg-green-100', 'text-green-800');
+                                    monthButton.classList.add('bg-amber-100', 'text-amber-800');
+                                } else {
+                                    monthButton.classList.remove('bg-amber-100', 'text-amber-800');
+                                    monthButton.classList.add('bg-green-100', 'text-green-800');
+                                }
+                            }
+                        });
+                        return; // 跳過主要繳費者的待繳金額計算，因為她自己是繳費者
+                    }
+
+                    let memberOwed = 0; // 單一成員的待收金額
+                    Object.entries(member.payments).forEach(([month, status]) => {
+                        const monthButton = cardElement.querySelector(`[data-member-id="${member.id}"][data-month="${month}"]`);
+                        if(monthButton) { // 確保按鈕存在
+                            if(status === 'unpaid') {
+                                memberOwed += monthlyFeePerPerson; // 使用新的每人每月費用 (38)
+                                monthButton.classList.remove('bg-green-100', 'text-green-800'); // 移除已繳樣式
+                                monthButton.classList.add('bg-amber-100', 'text-amber-800'); // 添加待繳樣式
+                            } else {
+                                monthButton.classList.remove('bg-amber-100', 'text-amber-800'); // 移除待繳樣式
+                                monthButton.classList.add('bg-green-100', 'text-green-800'); // 添加已繳樣式
+                            }
+                        }
+                    });
+                    cardElement.querySelector('.card-owed').textContent = `NT$ ${memberOwed}`; // 顯示整數
+                    totalOwedOverall += memberOwed; // 累積總待收金額
+                });
+
+                // 更新頁面上的總待收金額 (截至年底)
+                document.getElementById('total-owed-overall').textContent = `NT$ ${totalOwedOverall}`; // 顯示整數
+
+                // --- 計算僅限 fumi 已繳費月份的待收金額 (totalOwedForFumiPaidMonths) ---
+                let totalCollectedForChart = 0; // 圖表顯示的已收金額
+                let totalOwedForChart = 0; // 圖表顯示的待收金額
+
+                const fumi = membersData.find(m => m.id === 'fumi');
+                if (fumi) {
+                    // 遍歷 fumi 已繳費的所有月份 (例如 6 月、7 月)
+                    Object.keys(fumi.payments).forEach(fumiPaidMonth => {
+                        if (fumi.payments[fumiPaidMonth] === 'paid') { // 僅考慮 fumi 確實已繳費的月份
+                            membersData.forEach(otherMember => {
+                                if (!otherMember.isPayer) { // 對於每個 *其他* 成員
+                                    if (otherMember.payments[fumiPaidMonth] === 'paid') {
+                                        totalCollectedForChart += monthlyFeePerPerson;
+                                    } else {
+                                        totalOwedForChart += monthlyFeePerPerson;
+                                        totalOwedForFumiPaidMonths += monthlyFeePerPerson; // 加到這個新的特定總額
+                                    }
+                                }
+                            });
+                        }
+                    });
+                }
+                // 更新頁面上的「已墊付月份待收金額」
+                document.getElementById('total-owed-fumi-paid-months').textContent = `NT$ ${totalOwedForFumiPaidMonths}`; // 顯示整數
+
+                // 更新甜甜圈圖表
+                updateChart(totalCollectedForChart, totalOwedForChart);
+            }
+            
+            // 設定甜甜圈圖表
+            function setupChart() {
+                const ctx = document.getElementById('payment-chart').getContext('2d');
+                paymentChart = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['已收金額', '待收金額'],
+                        datasets: [{
+                            data: [0, 0], // 初始數據為 0
+                            backgroundColor: [
+                                'rgb(22 163 74)', // green-600
+                                'rgb(217 119 6)'  // amber-600
+                            ],
+                            borderColor: 'rgb(248 250 252)', // slate-50
+                            borderWidth: 4,
+                            hoverOffset: 8
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        cutout: '70%', // 甜甜圈中間的孔徑
+                        plugins: {
+                            legend: {
+                                position: 'bottom', // 圖例位置
+                                labels: {
+                                    padding: 20,
+                                    font: {
+                                        size: 14,
+                                        family: "'Noto Sans TC', sans-serif"
+                                    }
+                                }
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        let label = context.label || '';
+                                        if (label) {
+                                            label += ': ';
+                                        }
+                                        if (context.parsed !== null) {
+                                            label += new Intl.NumberFormat('zh-TW', { style: 'currency', currency: 'TWD', minimumFractionDigits: 0 }).format(context.parsed); // 顯示整數
+                                        }
+                                        return label;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            // 更新圖表數據
+            function updateChart(collected, owed) {
+                paymentChart.data.datasets[0].data[0] = collected;
+                paymentChart.data.datasets[0].data[1] = owed;
+                paymentChart.update(); // 重新繪製圖表
+            }
+
+            // 為月份按鈕和年繳按鈕添加點擊事件監聽器
+            membersGrid.addEventListener('click', (e) => {
+                if (e.target.classList.contains('month-toggle')) {
+                    const { memberId, month } = e.target.dataset;
+                    const member = membersData.find(m => m.id === memberId);
+                    if (member) {
+                        // 切換繳費狀態 (已繳 <-> 未繳)
+                        member.payments[month] = member.payments[month] === 'paid' ? 'unpaid' : 'paid';
+                        // 如果從年繳切換到月繳，則將繳費方式改為月繳
+                        if (member.paymentFrequency === 'yearly' && Object.values(member.payments).some(status => status === 'unpaid')) {
+                            member.paymentFrequency = 'monthly';
+                        }
+                        updateAll(); // 更新所有數據
+                    }
+                } else if (e.target.classList.contains('toggle-yearly-payment')) {
+                    const memberId = e.target.closest('.bg-white').dataset.memberId; // 從卡片中取得 memberId
+                    const member = membersData.find(m => m.id === memberId); // 找到對應的成員
+                    
+                    if (member) {
+                        // 將該成員 2025 年的所有月份標記為已繳
+                        Object.keys(member.payments).forEach(monthKey => {
+                            // 判斷是否為 2025 年的月份 (不含連字號，或明確判斷為 2025 年)
+                            if (!monthKey.includes('-') || monthKey.startsWith('2025')) { // 確保只影響 2025 年的月份
+                                member.payments[monthKey] = 'paid';
+                            }
+                        });
+                        member.paymentFrequency = 'yearly'; // 將繳費方式設定為年繳
+                        updateAll(); // 更新所有數據
+                    }
+                }
+            });
+
+            // 初始渲染和更新
+            renderCards();
+            setupChart();
+            updateAll();
+        });
+    </script>
+</body>
+</html>
